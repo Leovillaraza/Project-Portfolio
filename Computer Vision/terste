@@ -1,0 +1,361 @@
+#A.1 Code for Autonomous Sorter
+#CASSE3 process a picture at one time instead of capturing multiple frames
+#from the camera.
+from shapedetector import ShapeDetector
+from colorlabeler import ColorLabeler
+from picamera.array import PiRGBArray
+from picamera import PiCamera
+import time
+import cv2
+import imutils
+import numpy as np
+import RPi.GPIO as GPIO
+
+i=0
+
+#initialize camera and grab a reference to the raw camera capture
+camera = PiCamera()
+camera.resolution = (640,480)
+camera.framerate = 30                    
+rawCapture = PiRGBArray(camera, size=(640,480))
+
+
+#Within the for loop will be the main part of the code.
+for i in range(9):
+
+#warm up the camera
+    time.sleep(.1)
+
+#Take a picture to be resized and analyzed
+    camera.capture(rawCapture, format="bgr")
+    image = rawCapture.array
+    image = imutils.resize(image, width=300)
+    ratio = image.shape[0] / float(image.shape[0])
+
+
+#------------------------Blurring and Smoothing the Image--------------------
+# Blurring the image creates smoother edges for more accurate analysis
+
+#blur / convert to grayscale / covert to LAB color scheme
+    blurred = cv2.bilateralFilter(image, 9, 31, 41)
+    gray = cv2.cvtColor(blurred, cv2.COLOR_BGR2GRAY)
+    lab = cv2.cvtColor(blurred, cv2.COLOR_BGR2LAB)
+
+
+#-----------------------------Edge detection / Finding the contours----------------------
+
+#Canny is used for edge detection
+    canny = cv2.Canny(gray, 30,150)
+    
+#time to find and draw contours
+    (cnts, _) = cv2.findContours(canny.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    image = image.copy()
+    cv2.drawContours(image, cnts, -1, (0,255,0), 2)
+
+#    cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    sd = ShapeDetector() 
+    cl = ColorLabeler()
+#-------------------------------Find Center of Contour----------------------------------------
+
+    for c in cnts:
+
+        M = cv2.moments(c)
+        if (M["m00"] == 0):
+            M["m00"]=1
+            
+        cX = int(M["m10"] / M["m00"])
+        cY = int(M["m01"] / M["m00"])
+
+        shape = sd.detect(c)
+        color = cl.label(lab, c)
+
+        c *= ratio
+        text = "{} {}".format(color, shape)
+        cv2.drawContours(image, [c], -1, (0,255,0),2)
+       #cv2.circle(image2, (cX,cY), 3, (255,255,255), -1)
+        cv2.putText(image, text, (cX, cY),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 2)
+
+                    
+#------------------------------------- Servo Communication -------------------------------------------
+#Based on the data collected from the image we will controll our servos
+   
+# Set the RPi's GPIO pins     
+    GPIO.setmode(GPIO.BOARD)
+    
+    GPIO.setup(7, GPIO.OUT)
+    GPIO.setup(11, GPIO.OUT)
+    
+    slide_arm = GPIO.PWM(7,50)
+    push_arm = GPIO.PWM(11,50)
+
+    push_arm.start(7.5)
+    slide_arm.start(7.5)
+
+# The servo postion is determined by the duty cycle of the input signal
+# Below are the variables we'll use to change the duty cycle
+    red_square = 11.1
+    red_triangle = 10.1
+    red_circle = 9.1
+    
+    blue_square = 7.9
+    blue_triangle = 6.9
+    blue_circle = 5.8
+    
+    green_square = 5.0
+    green_triangle = 3.9
+    green_circle = 2.95
+
+    
+
+# Flow Control statments: They are nested if statments
+    if color == "red":
+        if shape == "square":
+            print 'this is a red square' #Used for debugging
+            
+            slide_arm.ChangeDutyCycle(red_square)
+            time.sleep(2)
+            
+    
+            
+        elif shape == "triangle":
+            print 'this is a red triangle'#Used for debugging
+            slide_arm.ChangeDutyCycle(red_triangle)
+            time.sleep(2)
+
+            
+        else: 
+            print 'this is a red circle'#Used for debugging
+            slide_arm.ChangeDutyCycle(red_circle)
+            time.sleep(2)
+
+
+    if color == "blue":
+        if shape == "square":
+            print 'this is a blue square'#Used for debugging
+            slide_arm.ChangeDutyCycle(blue_square)
+            time.sleep(2)
+
+            
+        elif shape == "triangle":
+            print 'this is a blue triangle'#Used for debugging
+            slide_arm.ChangeDutyCycle(blue_triangle)
+            time.sleep(2)
+
+            
+        else: 
+            print 'this is a blue circle'#Used for debugging
+            slide_arm.ChangeDutyCycle(blue_circle)
+            time.sleep(2)
+
+
+    if color == "green":
+        if shape == "square":
+            print 'this is a green square'#Used for debugging
+            slide_arm.ChangeDutyCycle(green_square)
+            time.sleep(2)
+
+            
+        elif shape == "triangle":
+            print 'this is a green triangle'#Used for debugging
+            slide_arm.ChangeDutyCycle(green_triangle)
+            time.sleep(2)
+
+            
+        else: 
+            print 'this is a green circle'#Used for debugging
+            slide_arm.ChangeDutyCycle(green_circle)
+            time.sleep(2)
+
+
+#----------------Push Object-------------------------
+    push_arm.ChangeDutyCycle(12.5)
+    time.sleep(1)
+    push_arm.ChangeDutyCycle(7.5)
+    time.sleep(1)
+
+    slide_arm.stop()
+    push_arm.stop()
+
+    GPIO.cleanup()
+
+#----------------------------------------
+
+    cv2.imshow("Image", image)
+
+    cv2.waitKey(3000)
+    rawCapture.truncate(0)
+    i=i+1
+    
+#A.2 Code for Image Processing
+
+#import packages
+import cv2
+
+class ShapeDetector:
+    def __init__(self):
+        pass
+
+    def detect(self, c):
+
+        shape = "unidentified"
+        peri = cv2.arcLength(c, True)
+        approx = cv2.approxPolyDP(c, 0.04 * peri, True)
+
+        #if the shape is a triangle, it will have 3 vertices
+        if len(approx) == 3:
+            shape = "triangle"
+
+        #if the shape has 4 vertices it is a square
+        elif len(approx) == 4:
+            shape = "square"
+
+        #otherwise the shape is a circle
+        else:
+            shape = "circle"
+
+        #return the name of the shape
+        return shape
+
+------------------------------------------------------------------------------------------------------------
+
+from scipy.spatial import distance as dist
+from collections import OrderedDict
+import numpy as np
+import cv2
+
+class ColorLabeler:
+
+    def __init__(self):
+        colors = OrderedDict({
+            "red":(150,29,21),
+            "green":(84,180,0),
+            "blue":(0,0,0)})
+
+        self.lab = np.zeros((len(colors), 1, 3), dtype="uint8")
+        self.colorNames = []
+
+        for(i,(name,rgb)) in enumerate(colors.items()):
+            self.lab[i] = rgb
+            self.colorNames.append(name)
+
+        self.lab = cv2.cvtColor(self.lab, cv2.COLOR_RGB2LAB)
+
+    def label(self, image, c):
+        mask = np.zeros(image.shape[:2], dtype="uint8")
+        cv2.drawContours(mask, [c], -1, 255, -1)
+        mask = cv2.erode(mask, None, iterations=2)
+        mean = cv2.mean(image, mask=mask)[:3]
+
+        minDist = (np.inf, None)
+
+        for(i, row) in enumerate(self.lab):
+            d = dist.euclidean(row[0], mean)
+
+            if d < minDist[0]:
+                minDist = (d,i)
+
+        return self.colorNames[minDist[1]]
+                             
+                        
+
+#A.3 Code for Chute arm
+#Based on the data collected from the image we will controll our servos
+   
+# Set the RPi's GPIO pins     
+    GPIO.setmode(GPIO.BOARD)
+    
+    GPIO.setup(7, GPIO.OUT)
+    GPIO.setup(11, GPIO.OUT)
+    
+    slide_arm = GPIO.PWM(7,50)
+    push_arm = GPIO.PWM(11,50)
+
+    push_arm.start(7.5)
+    slide_arm.start(7.5)
+
+# The servo position is determined by the duty cycle of the input signal
+# Below are the variables we'll use to change the duty cycle
+    red_square = 11.1
+    red_triangle = 10.1
+    red_circle = 9.1
+    
+    blue_square = 7.9
+    blue_triangle = 6.9
+    blue_circle = 5.8
+    
+    green_square = 5.0
+    green_triangle = 3.9
+    green_circle = 2.95
+
+    
+
+# Flow Control statments: They are nested if statments
+    if color == "red":
+        if shape == "square":
+            print 'this is a red square' #Used for debugging
+            
+            slide_arm.ChangeDutyCycle(red_square)
+            time.sleep(2)
+            
+    
+            
+        elif shape == "triangle":
+            print 'this is a red triangle'#Used for debugging
+            slide_arm.ChangeDutyCycle(red_triangle)
+            time.sleep(2)
+
+            
+        else: 
+            print 'this is a red circle'#Used for debugging
+            slide_arm.ChangeDutyCycle(red_circle)
+            time.sleep(2)
+
+
+    if color == "blue":
+        if shape == "square":
+            print 'this is a blue square'#Used for debugging
+            slide_arm.ChangeDutyCycle(blue_square)
+            time.sleep(2)
+
+            
+        elif shape == "triangle":
+            print 'this is a blue triangle'#Used for debugging
+            slide_arm.ChangeDutyCycle(blue_triangle)
+            time.sleep(2)
+
+            
+        else: 
+            print 'this is a blue circle'#Used for debugging
+            slide_arm.ChangeDutyCycle(blue_circle)
+            time.sleep(2)
+
+
+    if color == "green":
+        if shape == "square":
+            print 'this is a green square'#Used for debugging
+            slide_arm.ChangeDutyCycle(green_square)
+            time.sleep(2)
+
+            
+        elif shape == "triangle":
+            print 'this is a green triangle'#Used for debugging
+            slide_arm.ChangeDutyCycle(green_triangle)
+            time.sleep(2)
+
+            
+        else: 
+            print 'this is a green circle'#Used for debugging
+            slide_arm.ChangeDutyCycle(green_circle)
+            time.sleep(2)
+
+#A.4 Code for Sweeping Arm
+    push_arm.ChangeDutyCycle(12.5)
+    time.sleep(1)
+    push_arm.ChangeDutyCycle(7.5)
+    time.sleep(1)
+
+    slide_arm.stop()
+    push_arm.stop()
+
+    GPIO.cleanup()
